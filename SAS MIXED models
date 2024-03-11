@@ -1,1 +1,15 @@
+/* the following lines import data into SAS in the long format*/
+PROC IMPORT 
+OUT= WORK.mixedmod
+DATAFILE= "M:\KAMALINI_myresearch\HAGING\sas_for_above_below_medianagers013024.xls" 
+DBMS=xls REPLACE;   
+SHEET="saslong_abm";   
+GETNAMES=YES;
+RUN;
 
+/* the following code is run for each modular level of Braiinetome atlas region which generated the SAS long format data for each module. The example demonstrates L_CG */
+datasets MODULAR level*/
+DATA L_CG;SET WORK.mixedmod; IF MOD = 'L_CG' THEN OUTPUT L_CG; RUN;
+
+/*The following code runs the mixed model with repeated measures for each modular region. The example demonstrates L_CG */
+proc mixed data=work.L_CG; class PIDN AGRP roi; model apsd=AGRP age; repeated / SUBJECT=PIDN(roi); lsmeans AGRP/pdiff=all cl;RUN; quit;
