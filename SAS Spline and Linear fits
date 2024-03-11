@@ -1,0 +1,68 @@
+/*the following codes were used to generate the spline and linear fits for each frequency specific regional PSD dataset; The example demonstrates how it was done for alpha band*/
+
+ROC IMPORT 
+OUT= WORK.mixedmod
+DATAFILE= "M:\KAMALINI_myresearch\HAGING\haging_3grps_sasdems_mrv1.xls" 
+DBMS=xls REPLACE;   
+SHEET="SASLONG_PSD";   
+GETNAMES=YES;
+RUN;
+
+/* spline curves by module */
+proc glimmix data=mixedmod outdesign(x)=Xmatrix; 
+class MOD;      
+effect sp_age = spline(MEG_AGE / basis=bspline details); 
+model A = sp_age  mod sp_age*mod/ solution; 
+output out=Out pred=Pred;
+run;
+proc sort data=Out;
+by MOD meg_age;
+run;
+proc sgplot data=Out;
+scatter y=A x=meg_age / group=mod markerattrs=(symbol=circlefilled);
+series y=Pred x=meg_age / group=mod; 
+ods output  SGPlot = modular_splines; /* create data set from QQPlot */
+ods trace on;
+run;
+
+/* spline curves grand mean */
+proc glimmix data=mixedmod outdesign(x)=Xmatrix; 
+class MOD;      
+effect sp_age = spline(MEG_AGE / basis=bspline details); 
+model A = sp_age  / solution; 
+output out=Out pred=Pred;
+run;
+proc sort data=Out;
+by MOD meg_age;
+run;
+proc sgplot data=Out;
+scatter y=A x=meg_age / group=mod markerattrs=(symbol=circlefilled);
+series y=Pred x=meg_age / group=mod; 
+ods output  SGPlot = mean_spline; /* create data set from QQPlot */
+ods trace on;
+run;
+
+
+/* linear fit by module */
+proc mixed data=work.mixedmod; 
+class PIDN GRP roi MOD; 
+model A=meg_age mod meg_age*mod/solution outp=pred1r2 outpm = pred1f2;
+repeated / SUBJECT=PIDN(mod); 
+store out=MixedModel; 
+RUN;
+proc plm restore=MixedModel;
+effectplot slicefit(x=meg_age sliceby=mod)/ clm;
+ods output  sliceFitPlot = linear_module; 
+run;
+
+/* linear fit grand mean*/
+proc mixed data=work.mixedmod; 
+class PIDN GRP roi MOD; 
+model A=meg_age /solution outp=pred1r2 outpm = pred1f2;
+repeated / SUBJECT=PIDN(mod); 
+store out=MixedModel2; 
+RUN;
+proc plm restore=MixedModel2;
+effectplot fit(x=meg_age)/ clm;
+ods output  FitPlot = linear_mean; 
+run;
