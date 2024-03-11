@@ -1,1 +1,123 @@
+%function ROIlevel_PSD_fitPow3steps(subno)
+%
+% clc
+% close all
+
+%%
+%% 3-steps PSD fitting Approach
+%% This approach assumes there is a knee in PSD around 20Hz
+%% We defined the (HF)ranges.
+%% Parameters:
+%frange_LF = [2 20];
+frange_HF = [15 50];
+% For ROI-level analysis, determine the atlas you use first:
+atlasname = 'BN246';  % 'HCPMMP1';
+% Do you make the data_tc_rep structure?
+cflag = 'yes' % 'no'; % 'yes';
+method = 'SVD'; %  'Peak'; % 'SVD' !!!!!
+%
+% Path setting:
+% dir0 = pwd;
+% addpath(fullfile(dir0,'../../../../meganalysis_pathsetting'))
+% addpath(fullfile(dir0,'functions'))
+% Definition_addpath()
+[~, ~, ~, params] = Definition_parameters();
+%
+% Subject selection:
+if params.batch == 1
+	disp('Run in batch script')
+else
+	prompt = 'Input subject num:';
+	subno = input(prompt)
+end
+%[output_path,~,~,~] = subjectselection(subno)
+%
+common_source_path = params.common_source_path;
+BNoptionfile_path = '/data/research_meg12/kranasinghe/mfiles/mfiles_from_Kudo5_60s/meganalysis/Database/BNVoptionfiles';
+%
+[data_tc_rep,odir_roiana,path_to_atlasdir] = read_data_tc_rep(atlasname,cflag,method,output_path)
+%
+targetdir = fullfile(odir_roiana,'PSDs_fit3steps');
+odir_roiana = set_directory(targetdir);
+%
+targetdir = fullfile(odir_roiana,'FittedPSDs');
+odir_psdfit = set_directory(targetdir);
+%
+
+% Definition of frequency bands and their names
+[frequencybands, bandname] = Definition_frequencybands();
+
+% Atlas Info:
+atlasinfo = load(fullfile(common_source_path, 'atlasinfo'));
+numAtlaslabel = sum(atlasinfo.(atlasname).atlabelexist_mask);
+%
+numTrial = length(data_tc_rep.trial);
+%
+
+% output structure:
+ROIfit3step = [];
+
+%%% TF analysis on ROI %%%
+% define analysis parameters
+wlen = params.stft;  %2048;			% window length (recomended to be power of 2)
+hop = wlen/2;			% hop size (recomended to be power of 2)
+nfft = params.stft;  %2048;		% number of fft points (recomended to be power of 2)
+noverlap = wlen - hop;
+OverlapRatio = noverlap/wlen*100;   % percentile
+
+% Note: pwelch for z-scored data provides NormPSD (inc. considering freq_res)
+data = KK_dataconcatenation(data_tc_rep);
+% z-scoring
+zs = zscore(transpose(data.trial{1}));   % zs = (ts - ts_mean)./std(ts - ts_mean);
+%
+fs = data.fsample;
+[psd_welch,f_welch] = pwelch(zs,wlen,noverlap,nfft,fs);
+% figure
+% plot(f_welch,log10(psd_welch))
+% xlim([1 65])
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+freq_res = f_welch(2) - f_welch(1);
+
+
+meanFreq = zeros(numAtlaslabel,1);
+oofslope = zeros(numAtlaslabel,1);
+oof_b = zeros(numAtlaslabel,1);
+
+
+frBand = frange_HF; % [15 50] was used for UCSF, KU   [15 32] for HCP
+frBins= dsearchn( f_welch, frBand(1) ) : dsearchn( f_welch, frBand(2));
+XX = f_welch(frBins);
+ff_HF = XX;
+for roi = 1:numAtlaslabel
+	myPSD = psd_welch(:,roi);
+	YY= myPSD(frBins);
+	robRegMeth= 'ols'; doPlot= 0; thisCol= [0 0 1];
+	[intSlo, stat, Pows, Deviants, stat0, intSlo0] = fitPowerLaw3steps(XX,YY, robRegMeth,  doPlot, thisCol);
+
+	periodicP = Pows.obs-Pows.pred;
+	periodicP(periodicP<0) = 0;
+	%
+	focusBand= frange_for_betameanF;
+	%
+	focusBins= dsearchn( transpose(Pows.frex), focusBand(1) ) : dsearchn( transpose(Pows.frex), focusBand(2));
+	%
+	meanFreq(roi) = sum(Pows.frex(focusBins).*periodicP(focusBins))./sum(periodicP(focusBins));
+	oofslope(roi) = -intSlo(2);
+	oof_b(roi) = intSlo(1);
+    powall(roi)=Pows;
+
+end
+
+ROIfit3step.meanFreq_HF = meanFreq;
+ROIfit3step.oofslope_HF = oofslope;
+ROIfit3step.oof_b_HF = oof_b;
+ROIfit3step.pow=powall;
+
+
+% Save
+filename_ROIfit3step = fullfile(odir_roiana, 'ROIfit3step');
+save(filename_ROIfit3step, '-struct', 'ROIfit3step')
+
+
+%end  % end of function
 
