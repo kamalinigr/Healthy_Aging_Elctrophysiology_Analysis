@@ -1,1 +1,196 @@
+%function ROIlevel_PSD_minimum(subno)
+%
+clc
+close all
+%
+% For ROI-level analysis, determine the atlas you use first:
+atlasname = 'BN246';  % BNmod';   % 'BN246';  % 'HCPMMP1';
+% Do you make the data_tc_rep structure?
+cflag = 'yes' % 'no'; % 'yes';
+method = 'SVD'; %  'Peak'; % 'SVD' !!!!!
+%
+% Path setting:
+% dir0 = pwd;
+% addpath(fullfile(dir0,'../../../../meganalysis_pathsetting'))
+% addpath(fullfile(dir0,'functions'))
+% Definition_addpath()
+[~, ~, ~, params] = Definition_parameters();
+%
+% % Subject selection:
+% if params.batch == 1
+% 	disp('Run in batch script')
+% else
+% 	prompt = 'Input subject num:';
+% 	subno = input(prompt)
+% end
+% [output_path,~,~,~] = subjectselection(subno)
+%
+common_source_path = params.common_source_path;
+BNoptionfile_path = '/data/research_meg12/kranasinghe/mfiles/mfiles_from_Kudo5_60s/meganalysis/Database/BNVoptionfiles';
+%
+[data_tc_rep,odir_roiana,path_to_atlasdir] = read_data_tc_rep(atlasname,cflag,method,output_path)
+%
+%
+targetdir = fullfile(odir_roiana,'PSDs');
+odir_roiana = set_directory(targetdir);
+%
 
+% Set frequency band you calculate:
+%freqbands = [2 3 4]; % ---> theta, alpha, & beta bands
+freqbands = params.freqbands;  % [3 7];
+
+% Definition of frequency bands and their names
+[frequencybands, bandname] = Definition_frequencybands();
+
+% Atlas Info:
+atlasinfo = load(fullfile(common_source_path, 'atlasinfo'));
+numAtlaslabel = sum(atlasinfo.(atlasname).atlabelexist_mask);
+%
+numTrial = length(data_tc_rep.trial);
+%
+
+% output structure:
+ROIspectrum = [];
+
+% mean power for ROI representative time course
+avgpow = zeros(size(data_tc_rep.avgpow{1}));
+for ind_trl = 1:numTrial
+	avgpow = avgpow + data_tc_rep.avgpow{ind_trl};
+end
+avgpow = avgpow./numTrial;
+phat = sqrt(avgpow);  % sqrt(pow)!!
+%
+ROIspectrum.avgpow.val = avgpow;
+ROIspectrum.avgpow.label = data_tc_rep.label;     % I corrected here on Feb.4 2021.
+
+ROIspectrum.avgpow.comment = 'mean power s^2 for ROI representative time course';
+
+%%% TF analysis on ROI %%%
+% define analysis parameters
+wlen = params.stft;  %2048;			% window length (recomended to be power of 2)
+hop = wlen/2;			% hop size (recomended to be power of 2)
+nfft = params.stft;  %2048;		% number of fft points (recomended to be power of 2)
+noverlap = wlen - hop;
+OverlapRatio = noverlap/wlen*100;   % percentile
+
+for ind_trl = 1:numTrial
+	[STFT{ind_trl},STPSD{ind_trl},ff,tt,freq_res,wlen_sec,STPowTD{ind_trl},STPowFD{ind_trl}] = ...
+				KK_stft(data_tc_rep,ind_trl,wlen,hop,nfft);
+end
+
+ROIspectrum.TF.STFT = STFT;
+ROIspectrum.TF.STPSD = STPSD;
+ROIspectrum.TF.label = data_tc_rep.label;
+ROIspectrum.TF.ff = ff;
+ROIspectrum.TF.freq_res = freq_res;
+ROIspectrum.TF.tt = tt;
+ROIspectrum.TF.wlen = wlen;
+ROIspectrum.TF.hop = hop;
+ROIspectrum.TF.nfft = nfft;
+ROIspectrum.TF.OverlapR = OverlapRatio;
+ROIspectrum.TF.comment = 'STFT is used for computing ImCoh etc.';
+
+% avgSTPSD    % it should be noting that pre-added 'avg' denotes trial average
+tmp = zeros(size(STPSD{1}));
+for ind_trl = 1:numTrial
+	tmp = tmp + STPSD{ind_trl};
+end
+avgSTPSD = tmp./numTrial;   % ROIs x freq x time
+%
+% It should be noting that sum(mean(avgSTPSD,3),2)*freq_res/0.375
+% is equal to avgpow:
+[avgpow sum(mean(avgSTPSD,3),2)*freq_res/0.375]
+% mean(avgSTPSD,3) denotes time average, and sum(*, 2)*freq_res denotes freq integral.
+% 0.375 is correction for hanning window
+
+% power spectrum density
+avgPSD = mean(avgSTPSD,3)./0.375;   % ROIs x freq
+% Note that avgpow = sum(avgPSD,2)*freq_res;
+%
+figure
+plot(ff,log10(avgPSD))
+xlim([1 65])
+str = sprintf('resolution = %4.3f', freq_res);
+xlabel(['Frequency (Hz) [' str ']'])
+ylabel('log10 (pow/Hz)')
+
+% Note: avgPSD above is the same as Welch PSD described below:
+% x = transpose(data_tc_rep.trial{1});
+% fs = data_tc_rep.fsample;
+% [psd_welch,f_welch] = pwelch(x,wlen,noverlap,nfft,fs);
+% figure
+% plot(f_welch,log10(psd_welch))
+% xlim([1 55])
+% ---
+% This means 'pwelch' implemented in Matlab uses a window correction.
+
+% Normalized PSD   % Here, the nomalization means sum(NormPSD,2)*freq_res = 1
+NormPSD = avgPSD./(sum(avgPSD,2)*freq_res);
+figure
+plot(ff,log10(NormPSD))
+hold on
+plot(ff,log10(mean(NormPSD)),'Linewidth', 4)  % ROI-average
+xlim([1 50])
+str = sprintf('resolution = %4.3f', freq_res);
+xlabel(['Frequency (Hz) [' str ']'])
+ylabel('log10 (pow/Hz)')
+title('Normalized PSD')
+hold off
+outputfigname = ['NormalizedPSD_ROItimecourses'];
+print(fullfile(odir_roiana,outputfigname),'-dtiffn','-r0')
+
+
+ROIspectrum.PSD.avgSTPSD = avgSTPSD;
+ROIspectrum.PSD.comment1 = '[ROIs x freq x time]'
+ROIspectrum.PSD.comment2 = '"avg" denotes trial average. When numTrial = 1, avgSTPSD = STPSD{1}.';
+ROIspectrum.PSD.comment3 = 'sum(mean(avgSTPSD,3),2)*freq_res/0.375 is equal to "avgpow"';
+ROIspectrum.PSD.avgPSD = avgPSD;
+ROIspectrum.PSD.comment4 = 'avgPSD = mean(avgSTPSD,3)./0.375; % [ROIs x freq]';
+ROIspectrum.PSD.NormPSD = NormPSD;
+ROIspectrum.PSD.comment5 = 'NormPSD = avgPSD./(sum(avgPSD,2)*freq_res) i.e, sum(NormPSD,2)*freq_res = 1';
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% 'Standard' Relative power and Power Distribution
+PowROIs = metric_RelPow_and_PowDist(NormPSD,avgPSD,ff,freq_res,freqbands)
+
+ROIspectrum.PowROIs = PowROIs;
+ROIspectrum.PowROIs.comment = 'Standard Relative power and Power Distribution';
+
+for l = freqbands
+	Vals = PowROIs.RelativeP.(bandname{l});
+	range = [];
+	range.maxV = max(Vals);
+	range.minV = min(Vals);
+	range.eps = 0.1;
+	range.type = 2;
+	plttype = 'cortex';
+	CT = flipud(othercolor('RdYlGn4'));
+	adjustCM = 1;
+	outputfilename = ['RelPow_' bandname{l}];
+    if l==3
+	BNVplot(Vals,range,plttype,CT,odir_roiana,atlasname,outputfilename,adjustCM)
+    else
+    end;
+end
+
+% Note: pwelch for z-scored data provides NormPSD (inc. considering freq_res)
+data = KK_dataconcatenation(data_tc_rep);
+% z-scoring
+zs = zscore(transpose(data.trial{1}));   % zs = (ts - ts_mean)./std(ts - ts_mean);
+%
+fs = data.fsample;
+[psd_welch,f_welch] = pwelch(zs,wlen,noverlap,nfft,fs);
+figure
+plot(f_welch,log10(psd_welch))
+xlim([1 50])
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+% Save
+filename_ROIspectrum = fullfile(odir_roiana, 'ROIspectrum');
+save(filename_ROIspectrum, '-struct', 'ROIspectrum')
+
+
+%end  % end of function
